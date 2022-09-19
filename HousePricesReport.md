@@ -1975,8 +1975,8 @@ increasing gamma from its default value of 0.
         useful to combat overfitting.
     -   Too high gamma will restrict the model’s learning too much by
         not allowing it to split, and may lead to underfitting.
--   eta is shrinkage, and higher values makes the model more
-    conservative. I adjusted this along with gamma, as too much of both
+-   eta is shrinkage, and lower values makes the model more
+    conservative. I adjusted this along with gamma, as too high gamma or too low eta both
     led to underfitting.
 -   max_depth is the maximum number of splits allowed in one tree. I had
     the best results with max_depth=3, though an iteration with
