@@ -1521,24 +1521,17 @@ recipe1 <- recipe(formula=SalePrice ~., data=df_train) %>%
   step_lencode_glm(all_nominal_predictors(), outcome=vars(SalePrice)) %>%
   step_interact(terms = ~ MasVnrType:starts_with("Ext")) %>%
   step_interact(terms = ~ RoofMatl:starts_with("Ext")) %>% 
-  step_interact(terms = ~ HouseStyle:PUD) %>% 
-  step_interact(terms = ~ HouseStyle:HouseAge) %>% 
-  step_interact(terms = ~ HouseStyle:UnfLev) %>% 
-  step_interact(terms = ~ HouseStyle:BsmtExposure) %>% 
-  step_interact(terms = ~ MSSubClass:PUD) %>% 
-  step_interact(terms = ~ MSSubClass:HouseAge) %>% 
-  step_interact(terms = ~ MSSubClass:UnfLev) %>% 
-  step_interact(terms = ~ BsmtType1:BsmtFin1) %>% 
-  step_interact(terms = ~ BsmtType1:BsmtFinSF1) %>% 
-  step_interact(terms = ~ BsmtType2:BsmtFin2) %>% 
-  step_interact(terms = ~ BsmtType2:BsmtFinSF2) %>% 
+  step_interact(terms = ~ HouseStyle:PUD + HouseStyle:HouseAge + 
+                  HouseStyle:UnfLev + HouseStyle:BsmtExposure) %>% 
+  step_interact(terms = ~ MSSubClass:PUD + MSSubClass:HouseAge + 
+                  MSSubClass:UnfLev ) %>% 
+  step_interact(terms = ~ BsmtType1:BsmtFin1 + BsmtType1:BsmtFinSF1 ) %>% 
+  step_interact(terms = ~ BsmtType2:BsmtFin2 + BsmtType2:BsmtFinSF2 ) %>% 
   step_interact(terms = ~ MiscFeature:MiscVal) %>% 
-  step_interact(terms = ~ SaleMethod:CashPay) %>%
-  step_interact(terms = ~ SaleMethod:LowDown) %>%
-  step_interact(terms = ~ SaleMethod:LowInt) %>%
-  step_interact(terms = ~ GarageType:GarageQual) %>%
-  step_interact(terms = ~ GarageType:GarageCond) %>%
-  step_interact(terms = ~ GarageType:GarageFinish) %>%
+  step_interact(terms = ~ SaleMethod:CashPay + SaleMethod:LowDown + 
+                  SaleMethod:LowInt ) %>%
+  step_interact(terms = ~ GarageType:GarageQual + GarageType:GarageCond + 
+                  GarageType:GarageFinish) %>%
   step_log(all_outcomes()) %>%
   step_zv(all_predictors()) %>%
   step_center(all_predictors()) %>%
@@ -1570,15 +1563,42 @@ we chose these interaction terms:
     attributes may matter more or less for different types of garages.
 
 We can use our recipe directly in model fitting functions, in place of
-the formula argument. We can also “bake” the recipe to get the processed
-data.
+the formula argument, and all these operations will be carried out
+before the model is fit. Or, we can apply the preprocessing before
+fitting the model, save the processed data, and fit our models in matrix
+format. We can “prep” the recipe to calculate the values and parameters
+necessary to apply the transformations, and then we can “bake” the
+recipe to apply the transformations and get the processed data.  
+  
+We will first prep the training data, save the prepped object, and use
+it to bake the training and testing data. This way, we will apply the
+encoding, centering and scaling parameters derived from the training
+dataset ONLY, to the training and testing datasets. This is important
+for two reasons:
+
+-   To avoid data leakage from the testing dataset into the training
+    dataset.
+-   To ensure the encoded / centered / scaled representations of a given
+    value is the same in both training and testing datasets,
+
+If we didn’t take this into account, and preprocessed the testing data
+by itself, the encoded numeric representations for the same nominal
+factor level could be different in the training and testing data,
+leading to noise.
 
 ``` r
-#bake recipe1 to get the processed data
-df_train1 <- recipe1 %>% prep() %>% bake(new_data=df_train)
+#prep recipe1 on the training dataset to get the preprocessing parameters
+prep_object <- recipe1 %>% prep(new_data=df_train)
+
+#bake prep_object on the training dataset
+df_train1 <- prep_object %>% bake(new_data=df_train)
 df_train1 <- df_train1 %>% relocate(SalePrice, .after=GarageType_x_GarageFinish)
 
-#drop the outcome variable to get a copy of the dataframe with the predictors only
+#bake prep_object on the testing dataset
+df_test1 <- prep_object %>% bake(new_data=df_test)
+df_test1  <- df_test1  %>% relocate(SalePrice, .after=GarageType_x_GarageFinish)
+
+#get a copy of the training dataset with the predictors only
 train_x1 <- dplyr::select(df_train1, -c("SalePrice"))
 ```
 
@@ -1925,7 +1945,7 @@ xgb_params <- list(
   gamma=0.0275,
   subsample=0.5,
   colsample_bytree=0.6,
-  min_child_weight=0.8,
+  min_child_weight=1,
   objective="reg:squarederror")
 
 
@@ -1975,9 +1995,9 @@ increasing gamma from its default value of 0.
         useful to combat overfitting.
     -   Too high gamma will restrict the model’s learning too much by
         not allowing it to split, and may lead to underfitting.
--   eta is shrinkage, and lower values makes the model more
-    conservative. I adjusted this along with gamma, as too high gamma or too low eta both
-    led to underfitting.
+-   eta is the learning rate / shrinkage, and lower values makes the
+    model more conservative. I adjusted this along with gamma, as too
+    high gamma together with too low eta led to underfitting.
 -   max_depth is the maximum number of splits allowed in one tree. I had
     the best results with max_depth=3, though an iteration with
     max_depth=2 came very close to my best performing model in
@@ -2016,10 +2036,7 @@ Finally, let’s fit and train the final model, which we can use to make a
 prediction on the testing data.
 
 ``` r
-#apply processing steps to testing data
-df_test1 <- recipe1 %>% prep() %>% bake(new_data=df_test)
-df_test1  <- df_test1  %>% relocate(SalePrice, .after=GarageType_x_GarageFinish)
-
+#prepare testing dataset
 #drop the outcome variable and select the top 100 predictors
 test_x <- dplyr::select(df_test1 , -c("SalePrice"))
 test_x <- df_test1[,mrmr_index[1:100]]
@@ -2034,7 +2051,7 @@ xgb1 <- xgb.train(params=xgb_params, data=xgb_train, nrounds=682)
 
 #make predictions with the final model
 preds <- predict(xgb1, newdata=xgb_test)
-#remember to take the exponential of the predictions
+#remember to add ID column, and take the exponential of the predictions
 df_pred <- data.frame(Id=1461:2919, SalePrice=exp(preds))
 ```
 
@@ -2114,19 +2131,53 @@ improvements in prediction performance:
 -   Using target encoding for nominal features may have contributed to
     overfitting. A different encoding method may alleviate this, and be
     more suitable for this dataset.
--   My approach to combatting redundancy was simply dropping the
-    predictors with the lowest 40 MRMR scores. Instead of dropping them
-    all, methods such as PCA may help retain some of their “uncommon”
+-   My approach to combatting redundancy was simply dropping some
+    predictors with the lower MRMR scores. Instead of dropping them all,
+    methods such as PCA may help retain some of their “uncommon”
     information.
 -   I applied MRMR feature selection after encoding all categorical
     features into numerics. The mRMRe package is capable of applying
     MRMR to numeric and categorical features alike, with different
     methods. It’s possible this is more appropriate for this dataset.
--   My approach to hyperparameter tuning was semi-manual, and may not
-    have been ideal. There may be a better method / package to tune
-    parameters more “intelligently”, without taking too much time.
 -   I didn’t do much research on house materials, styles and other
     domain knowledge. This may help with engineering better futures, and
     identifying important interaction terms.
+-   My approach to hyperparameter tuning was semi-manual, and may not
+    have been ideal. There may be a better method / package to tune
+    parameters more “intelligently”, without taking too much time.
+    -   UPDATE SEP 19 22: I tried different workflows and hyperparameter
+        tuning algorithms to see if I can achieve better results.
+        -   I am most satisfied with the [mlr3
+            package](https://mlr3.mlr-org.com/) for hyperparameter
+            tuning, in terms of workflow and variety of tuning
+            algorithms.
+        -   To find good tunes in relatively short time periods, I had
+            the best results with the hyperband and simulated annealing
+            algorithms. I was not able to beat my best submission tune,
+            but I found tunes that came very close in a short amount of
+            time. The tunes themselves were close to my best submission
+            tune, with slightly more complexity and regularization.
+        -   I found a helpful general strategy for XGBoost
+            hyperparameter tuning, which I will summarize below. For all
+            of the steps below, hold “nrounds” constant at a high
+            number, with early stopping. Hold the other parameters
+            constant either at their previously tuned best values, or at
+            their defaults if they aren’t tuned yet.
+            1.  Tune the learning rate, “eta”.
+            2.  Tune the tree complexity parameters, “max_depth” and
+                “min_child_weight”.
+            3.  Tune the randomness parameters, “subsample” and
+                “colsample_bytree”.
+            4.  Check the spread between the training and testing errors
+                (with xgb.cv). If the spread is large (indicative of
+                overfitting), tune the regularization parameters:
+                “gamma” only, or “gamma”, “lambda” (L2 regularization)
+                and “alpha” (L1 regularization) together.
+            5.  If the resulting tune is considerably different from the
+                default hyperparameter values, tune “eta” again.
+            6.  Finally, determine the optimal “nrounds” for this tune
+                using xgb.cv.
+        -   For more details on this method, see section 12.5.2 of [this
+            article](https://bradleyboehmke.github.io/HOML/gbm.html#xgboost).
 
 Any comment, feedback and suggestion is welcome.

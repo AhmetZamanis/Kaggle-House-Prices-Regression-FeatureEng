@@ -987,13 +987,17 @@ recipe1 <- recipe(formula=SalePrice ~., data=df_train) %>%
   step_lencode_glm(all_nominal_predictors(), outcome=vars(SalePrice)) %>%
   step_interact(terms = ~ MasVnrType:starts_with("Ext")) %>%
   step_interact(terms = ~ RoofMatl:starts_with("Ext")) %>% 
-  step_interact(terms = ~ HouseStyle:PUD + HouseAge + UnfLev + BsmtExposure) %>% 
-  step_interact(terms = ~ MSSubClass:PUD + HouseAge + UnfLev ) %>% 
-  step_interact(terms = ~ BsmtType1:BsmtFin1 + BsmtFinSF1 ) %>% 
-  step_interact(terms = ~ BsmtType2:BsmtFin2 + BsmtFinSF2 ) %>% 
+  step_interact(terms = ~ HouseStyle:PUD + HouseStyle:HouseAge + 
+                  HouseStyle:UnfLev + HouseStyle:BsmtExposure) %>% 
+  step_interact(terms = ~ MSSubClass:PUD + MSSubClass:HouseAge + 
+                  MSSubClass:UnfLev ) %>% 
+  step_interact(terms = ~ BsmtType1:BsmtFin1 + BsmtType1:BsmtFinSF1 ) %>% 
+  step_interact(terms = ~ BsmtType2:BsmtFin2 + BsmtType2:BsmtFinSF2 ) %>% 
   step_interact(terms = ~ MiscFeature:MiscVal) %>% 
-  step_interact(terms = ~ SaleMethod:CashPay + LowDown + LowInt ) %>%
-  step_interact(terms = ~ GarageType:GarageQual + GarageCond + GarageFinish) %>%
+  step_interact(terms = ~ SaleMethod:CashPay + SaleMethod:LowDown + 
+                  SaleMethod:LowInt ) %>%
+  step_interact(terms = ~ GarageType:GarageQual + GarageType:GarageCond + 
+                  GarageType:GarageFinish) %>%
   step_log(all_outcomes()) %>%
   step_zv(all_predictors()) %>%
   step_center(all_predictors()) %>%
@@ -1029,7 +1033,7 @@ df_train1 <- prep_object %>% bake(new_data=df_train)
 df_train1 <- df_train1 %>% relocate(SalePrice, .after=GarageType_x_GarageFinish)
 
 #bake prep_object on the testing dataset
-df_test1 <- prep_object %>% bake(new_data=df_test1)
+df_test1 <- prep_object %>% bake(new_data=df_test)
 df_test1  <- df_test1  %>% relocate(SalePrice, .after=GarageType_x_GarageFinish)
 
 #get a copy of the training dataset with the predictors only
