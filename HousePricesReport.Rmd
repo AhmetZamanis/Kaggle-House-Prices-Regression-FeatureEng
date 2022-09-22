@@ -1071,8 +1071,15 @@ mrmr_index <- c(solutions(mrmr)[[1]])
 mrmr_scores <-  c(scores(mrmr)[[1]])
 
 ```
-The package uses mutual information as the metric of both relevancy and redundancy: Relevancy is the mutual information of the predictor with the target variable, while redundancy is the average mutual information of the predictor with the other previously evaluated predictors. The MRMR score for a predictor is then calculated by subtracting redundancy from relevancy. Therefore, negative MRMR scores are possible, but do not necessarily mean the predictor has no information on the target variable.
-\
+The package documentation states it uses mutual information as the metric of both relevancy and redundancy, though it uses a linear approximation based on correlation to estimate the mutual information matrix. According to the documentation, relevancy is the estimated mutual information of the predictor with the target variable, while redundancy is the average estimated mutual information of the predictor with the previously chosen predictors. The MRMR score for a predictor is then calculated by subtracting redundancy from relevancy. Therefore, negative MRMR scores are possible, but do not necessarily mean the predictor has no information on the target variable.
+
+  - Normally, mutual information takes a value from zero to infinity, unlike correlation which takes a value between -1 and 1, with the absolute value being the "effect size".
+    - However, the mRMRe package calculates MI as a linear approximation from correlation, and seems to return a "mutual information matrix" consisting of values between -1 and 1, similar to a correlation matrix. 
+    - This implies the MRMR score is likely calculated by subtracting the absolute value of relevancy from the absolute value of redundancy, otherwise negative values would be wrongly interpreted.
+    - The exact calculation is not clearly explained in the package documentation or vignette, but in my experience with several datasets, the mRMRe ranking of features intuitively make sense, and we'll compare them with other feature importance methods later.
+  - MRMR scores can also be calculated as |Relevancy|/|Redundancy|, which is the approach taken in the article above. I find this approach more intuitive than subtraction, as it avoids negative MRMR scores, which do not necessarily mean the feature is "useless" from my experience. Instead, we get MRMR scores that are always positive. 
+    - To do this with the output from the mRMRe package, retrieve the relevancy scores from the MI matrix, take their absolute value, and subtract the MRMR scores from them. The results should be the absolute values of the redundancy scores. Divide relevancy and redundancy to get MRMR scores that are always positive. Remember to add a very small positive value to any redundancy score of 0, to avoid zeroes in the denominator.
+
 \
 Now that we have the indexes of our predictors, ordered in a vector according to their MRMR ranking, we can use these indexes to select any subset of top N predictors in our data. Before we move on to modeling, let's make some visualizations that show the MRMR score, relevancy and redundancy of the highest ranked features, to see if they make sense.
 ```{r MRMRViz}
@@ -1093,7 +1100,7 @@ mim_tab <- mim_tab %>% arrange(rownames(mim_tab))
 
 #add the MRMR scores, and calculate redundancy scores
 mim_tab$MRMRScore <- mrmr_scores[1:5]
-mim_tab$Redundancy <- mim_tab$Relevancy - mim_tab$MRMRScore
+mim_tab$Redundancy <- abs(mim_tab$Relevancy) - mim_tab$MRMRScore
 mim_tab <- mim_tab %>% relocate(MRMRScore, .after=Redundancy)
 mim_tab$Relevancy <- round(mim_tab$Relevancy, 4)
 mim_tab$Redundancy <- round(mim_tab$Redundancy, 4)
@@ -1124,9 +1131,8 @@ The plot offers several insights into the MRMR feature selection process:
   - The highest relevancy predictor is not always ranked higher.
   - These are likely because the calculation of redundancy, and therefore the MRMR score is dynamic: A different subset of co-predictors is used to calculate redundancy in every iteration.
     - For example, Neighborhood is ranked third, and GrLivArea is ranked second, even though Neighborhood has a higher MRMR score, higher relevancy and lower redundancy. 
-    - The calculation for the second predictor takes into account only the redundancy with OverallQual, while the calculation for the third predictor takes into account theaverage redundancy with OverallQual and GrLivArea.
+    - The calculation for the second predictor takes into account only the redundancy with OverallQual, while the calculation for the third predictor takes into account the average redundancy with OverallQual and GrLivArea.
     - Neighborhood must have scored worse than GrLivArea in the second iteration, even if it can score "better" in the third.
-  - Keep in mind that mutual information does not have a hard limit, unlike a maximum correlation of 1. Zero mutual information means just that, while a larger value means more information in common between the two variables.
   
 The top predictors of house sale price generally make sense:
 
@@ -1215,8 +1221,7 @@ set.seed(1922)
 The parameter set above is the one that gave me the best results, and my best competition submission. Let's talk about how to tune with xgb.cv, and my parameter choices.
 
   - xgb.cv is primarily useful for fine tuning nrounds: The number of boosting rounds. 
-    - Generally, too many boosting rounds will lead to overfitting: Training error will keep decreasing, while testing error will increase or remain stuck.
-    - To prevent this, we use the early_stopping_rounds parameter: Boosting stops after an N number of rounds with no improvement in testing performance.
+    - Generally, too many boosting rounds will lead to overfitting: Training error will keep decreasing, while testing error will increase or remain stuck. To prevent this, we use the early_stopping_rounds parameter: Boosting stops after an N number of rounds with no improvement in testing performance.
   - Setting verbose=1 in xgb.cv prints the results of each boosting round as they are carried out. It can be insightful to watch how training and testing error changes across rounds.
     - Generally, training error will end up lower than the testing error. 
     - However, if the difference is too big, it may indicate overfitting. The model may have learned some information from the training data, that does not apply to the testing data. More conservative model parameters may improve performance.
@@ -1227,7 +1232,7 @@ In this case, performance improved dramatically when I slowly started increasing
   - gamma is the regularization parameter for boosted trees, especially useful when the predictors have high multicollinearity / redundancy.   
     - Higher gamma leads to a more regularized, conservative model, and requires higher gain for new splits to be made. This may be useful to combat overfitting.
     - Too high gamma will restrict the model's learning too much by not allowing it to split, and may lead to underfitting.
-  - eta is the learning rate / shrinkage, and lower values makes the model more conservative. I adjusted this along with gamma, as too high gamma together with too low eta led to underfitting.
+  - eta is shrinkage, and lower values makes the model more conservative. I adjusted this along with gamma.
   - max_depth is the maximum number of splits allowed in one tree. I had the best results with max_depth=3, though an iteration with max_depth=2 came very close to my best performing model in validation, but performed a bit worse in the final submission.
   - subsample and colsample_by_tree are used to introduce some randomness into the model to make it more robust, by sampling a certain ratio of the dataset and the predictors in each boosting round. I lowered these a little, compared to the initial tune suggested by caret, and saw some benefit.
   - min_child_weight can be thought of as a threshold that needs to be passed for a new split to be made in the trees. Slightly increasing or decreasing this value from its default didn't make too much of a difference in this case. It likely has effect with bigger integer values, such as 2, 4, 6 and beyond.
@@ -1307,15 +1312,14 @@ Keep in mind that a higher absolute SHAP value means a bigger effect on the targ
 
 To conclude this report, here are a few possible steps that may yield improvements in prediction performance:
 
-  - Using target encoding for nominal features may have contributed to overfitting. A different encoding method may alleviate this, and be more suitable for this dataset.
-  - My approach to combatting redundancy was simply dropping some predictors with the lower MRMR scores. Instead of dropping them all, methods such as PCA may help retain some of their "uncommon" information.
-  - I applied MRMR feature selection after encoding all categorical features into numerics. The mRMRe package is capable of applying MRMR to numeric and categorical features alike, with different methods. It's possible this is more appropriate for this dataset.
+  - Using target encoding for nominal features may have contributed to overfitting. A different encoding method may be more suitable for this dataset.
+  - My approach to combatting redundancy was simply dropping some predictors with the lower MRMR rankings. Instead of dropping them all, methods such as PCA may help retain some of their "uncommon" information.
   - I didn't do much research on house materials, styles and other domain knowledge. This may help with engineering better futures, and identifying important interaction terms.
   - My approach to hyperparameter tuning was semi-manual, and may not have been ideal. There may be a better method / package to tune parameters more "intelligently", without taking too much time.
-    - UPDATE SEP 19 22: I tried different workflows and hyperparameter tuning algorithms to see if I can achieve better results. 
+    - UPDATE SEP 19 22: I tried different packages, workflows and hyperparameter tuning algorithms to see if I can achieve better results. 
       - I am most satisfied with the [mlr3 package](https://mlr3.mlr-org.com/) for hyperparameter tuning, in terms of workflow and variety of tuning algorithms. 
-      - To find good tunes in relatively short time periods, I had the best results with the hyperband and simulated annealing algorithms. I was not able to beat my best submission tune, but I found tunes that came very close in a short amount of time. The tunes themselves were close to my best submission tune, with slightly more complexity and regularization.
-      - I found a helpful general strategy for XGBoost hyperparameter tuning, which I will summarize below. For all of the steps below, hold "nrounds" constant at a high number, with early stopping. Hold the other parameters constant either at their previously tuned best values, or at their defaults if they aren't tuned yet.
+      - To find good tunes in relatively short time periods, I had the best results with the hyperband and simulated annealing algorithms. I was not able to beat my best submission tune, but I found tunes that came very close in a short amount of time. The hyperparameter values were close to my best submission tune, with slightly more complexity and regularization.
+      - I found a helpful general strategy for XGBoost hyperparameter tuning, which I will summarize. For all of the steps below, hold "nrounds" constant at a high number, with early stopping. Hold the other parameters constant either at their previously tuned best values, or at their defaults if they aren't tuned yet.
         1. Tune the learning rate, "eta".
         2. Tune the tree complexity parameters, "max_depth" and "min_child_weight".
         3. Tune the randomness parameters, "subsample" and "colsample_bytree".
